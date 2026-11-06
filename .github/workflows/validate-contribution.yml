@@ -1,0 +1,96 @@
+name: Validate Contribution
+
+# pull_request_target is used only to read PR metadata through the API. This
+# workflow never checks out or executes pull request contents.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: foss-verify-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask the competition server
+        id: verify
+        uses: actions/github-script@v7
+        env:
+          BRIDGE_URL: ${{ vars.FOSS_BRIDGE_URL }}
+          BRIDGE_SECRET: ${{ secrets.FOSS_BRIDGE_SECRET }}
+        with:
+          script: |
+            const url = (process.env.BRIDGE_URL || "").replace(/\/$/, "");
+            if (!url || !process.env.BRIDGE_SECRET) {
+              core.setFailed("FOSS_BRIDGE_URL / FOSS_BRIDGE_SECRET are not configured.");
+              return;
+            }
+            const pr = context.payload.pull_request;
+            const res = await fetch(`${url}/internal/github/pr-flag`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-foss-bridge": process.env.BRIDGE_SECRET,
+              },
+              body: JSON.stringify({
+                prNumber: pr.number,
+                githubUserId: String(pr.user.id),
+                githubLogin: pr.user.login,
+              }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.flag) {
+              core.setFailed(data.error || `Verification failed (${res.status}).`);
+              return;
+            }
+            core.setOutput("flag", data.flag);
+            core.setSecret(data.flag);
+
+      - name: Comment the flag
+        if: steps.verify.outputs.flag
+        uses: actions/github-script@v7
+        env:
+          FLAG: ${{ steps.verify.outputs.flag }}
+        with:
+          script: |
+            const marker = "<!-- foss-mec-verify -->";
+            const body = [
+              marker,
+              "✅ **FOSS MEC Contribution Verified**",
+              "",
+              "Your pull request passed the challenge.",
+              "",
+              "Your flag:",
+              "",
+              "```",
+              process.env.FLAG,
+              "```",
+              "",
+              "Return to the competition terminal and run `foss submit <flag>`.",
+            ].join("\n");
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const previous = comments.find((c) => c.body && c.body.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
