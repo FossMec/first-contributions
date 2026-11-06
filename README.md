@@ -10,6 +10,8 @@ are recorded in the `contributors/` directory. Once the event is public,
 GitHub's [contributors graph](https://github.com/FossMec/first-contributions/graphs/contributors)
 will also list contributors whose changes have been merged.
 
+- [dijith-481](https://github.com/dijith-481) — repository setup
+
 ## How to complete the challenge
 
 1. Fork this repository to your own GitHub account.
